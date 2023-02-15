@@ -1,0 +1,585 @@
+---
+title: "Linear Regression"
+format: html
+editor: visual
+---
+
+## Load dataframe
+
+As part of the project requirement, this section aims to develop a multiple regression model that is capable of predicting the price of Airbnb properties in Madrid. As a result of the exploratory analysis, two data sets will be used and compared:
+
+\[1\] *Madrid_airbnb_noreview* consists of 9395 observations and 42 columns. It is the file resulting from removing all nulls and outliers from the original data frame.
+
+\[2\] *Madrid_airbnb\_ imputed_reviews_others* consists of 10181 observations and 42 columns. It is the file resulting from imputing KNN to fill the nulls and remove outliers from the original data frame
+
+```{r}
+airbnb <- read.csv('Madrid_airbnb_noreview.csv', stringsAsFactors = T)
+head(airbnb)
+```
+
+```{r}
+airbnb2 <- read.csv('Madrid_airbnb_imputed_reviews_others.csv', stringsAsFactors = T)
+head(airbnb2)
+```
+
+Explore the dataframe:
+
+```{r}
+paste("Madrid_airbnb_noreview file contains", length(colnames(airbnb)), "columns and", nrow(airbnb), "rows")
+colnames(airbnb)
+```
+
+```{r}
+paste("Madrid_airbnb_imputed_review file contains", length(colnames(airbnb2)), "columns and", nrow(airbnb2), "rows")
+colnames(airbnb2)
+```
+
+Remove column index\[1\]:
+
+```{r}
+airbnb <- airbnb[,-1]
+airbnb2 <- airbnb2[,-1]
+```
+
+Check structure (data types are the same in both dataframes):
+
+```{r}
+str(airbnb)
+```
+
+Check if there is NA values:
+
+```{r}
+paste("Count of missing values in airbnb dataframe is:", sum(is.na(airbnb)))
+paste("Count of missing values in airbnb dataframe is:", sum(is.na(airbnb2)))
+
+# which(is.na(airbnb)) # position of NA
+```
+
+Create a copy of the data frames as they will be used for linear regression.
+
+```{r}
+airbnb_original <- airbnb 
+airbnb2_original <- airbnb2
+```
+
+Before we move on to creating the linear regression model, let's explore the data with some graphs. In this case, only one of the data frames has been taken for simplicity.
+
+Check the date format:
+
+```{r}
+head(airbnb$Host.Since)
+head(airbnb$First.Review)
+head(airbnb$Last.Review)
+
+typeof(airbnb$Host.Since)
+typeof(airbnb$First.Review)
+typeof(airbnb$Last.Review)
+
+```
+
+Change date format from integer to POSIXct.
+
+Load library *lubridate* to work with dates:
+
+```{r}
+library(lubridate)
+```
+
+```{r}
+#Sys.setlocale("LC_ALL", "C") # system-specific string
+
+airbnb$Host.Since <- as.POSIXct(airbnb$Host.Since, format = '%Y-%m-%d')
+airbnb$First.Review <- as.POSIXct(airbnb$First.Review, format = '%Y-%m-%d')
+airbnb$Last.Review <- as.POSIXct(airbnb$Last.Review, format = '%Y-%m-%d')
+
+```
+
+Check if the changes are applied:
+
+```{r}
+str(airbnb$Host.Since)
+str(airbnb$First.Review)
+str(airbnb$Last.Review)
+```
+
+Check the columns that need to be factored:
+
+```{r}
+head(airbnb$Host.Response.Time)
+head(airbnb$Room.Type)
+head(airbnb$Bed.Type)
+head(airbnb$Cancellation.Policy)
+
+
+typeof(airbnb$Host.Response.Time)
+typeof(airbnb$Room.Type)
+typeof(airbnb$Bed.Type)
+typeof(airbnb$Cancellation.Policy)
+```
+
+Change to factor *Host.Response.Time*:
+
+```{r}
+table(airbnb$Host.Response.Time)
+```
+
+```{r}
+airbnb$Host.Response.Time <- factor(airbnb$Host.Response.Time, labels=c('A few days or more', 'Within a day', 'Within a few hours', 'Within an hour'))
+
+summary(airbnb$Host.Response.Time)
+
+class(airbnb$Host.Response.Time)
+```
+
+Change to factor *Room.Type*:
+
+```{r}
+table(airbnb$Room.Type)
+```
+
+```{r}
+airbnb$Room.Type <- factor(airbnb$Room.Type, labels=c('Shared room', 'Private room', 'Entire home/apt'))
+
+summary(airbnb$Room.Type)
+
+class(airbnb$Room.Type)
+```
+
+Change to factor *Bed.Type*:
+
+```{r}
+table(airbnb$Bed.Type)
+```
+
+```{r}
+airbnb$Bed.Type <- factor(airbnb$Bed.Type, labels=c('Pull-out Sofa', 'Airbed', 'Couch', 'Futon', 'Real Bed'))
+
+summary(airbnb$Bed.Type)
+
+class(airbnb$Bed.Type)
+```
+
+Change to factor *Cancellation.Policy*:
+
+```{r}
+table(airbnb$Cancellation.Policy)
+```
+
+```{r}
+airbnb$Cancellation.Policy <- factor(airbnb$Cancellation.Policy, labels=c('Strict', 'Moderate', 'Flexible'))
+
+summary(airbnb$Cancellation.Policy)
+
+class(airbnb$Cancellation.Policy)
+```
+
+Check if the changes are applied:
+
+```{r}
+str(airbnb$Host.Response.Time)
+str(airbnb$Room.Type)
+str(airbnb$Bed.Type)
+str(airbnb$Cancellation.Policy)
+```
+
+```{r}
+str(airbnb)
+```
+
+## Visualizations
+
+This section will also considers only one of the data frames for simplicity.
+
+### 1. Do real estate investment firms charge a high price for their listings?
+
+```{r}
+library(tidyverse)
+
+# Number of properties by host. The host owning more than 8 properties are considered real state investors
+nproperties <- airbnb |> group_by(Host.ID) |>
+  summarise(total_prop = length(unique(ID)),
+            median_price = round(median(Price),2),
+            asset_investor = total_prop>=8)
+
+nproperties <- nproperties |> filter(total_prop > 2)
+```
+
+```{r}
+summary(nproperties$total_prop)
+
+table(nproperties$asset_investor)
+```
+
+```{r}
+ggplot(nproperties, aes(x=median_price, color=asset_investor)) + 
+  geom_histogram(aes(fill=asset_investor), alpha=0.6)+
+  geom_boxplot(width=15) + theme_bw()+
+  scale_x_continuous(breaks = seq(0, 500, by=25))
+```
+
+In the graph above, we see that the median property price of large asset investment firms is higher than the price offered by individual/small real estate firms.
+
+### 2. Do *host since* show a difference in price (month/year)?
+
+```{r}
+month_year <- airbnb |>
+  summarise(host_price = as.numeric(Price),
+            host_month = month(Host.Since),
+            host_year = as.character(factor(year(Host.Since))))
+```
+
+```{r}
+unique(month_year$host_year)
+```
+
+```{r}
+# require(plyr) # ddply
+# require(ggplot2) # ggplot
+
+df_summarized <- plyr::ddply(month_year, c("host_month", "host_year"), summarize, 
+           host_price.median = median(host_price, na.rm = T))
+```
+
+```{r}
+ggplot(df_summarized, aes(x = host_month, y = host_price.median, group = host_year, color = host_year)) +
+  geom_line()+ xlab("Month") + ylab("Median price per year") + 
+  scale_x_continuous(breaks = seq(1, 12, by=1)) +
+  theme_bw() + theme(legend.title = element_blank(), legend.position="bottom")
+```
+
+Same plot after removing the years 2009 and 2017 as there is no data for the full year:
+
+```{r}
+df_summarized |>
+  filter(host_year!=c("2009", "2017")) |>
+  ggplot(aes(x = host_month, y = host_price.median, group = host_year, color = host_year)) +
+  geom_line()+ xlab("Month") + ylab("Median price per year") + 
+  scale_x_continuous(breaks = seq(1, 12, by=1)) +
+  theme_bw() + theme(legend.title = element_blank(), legend.position="bottom")
+```
+
+Data frame 'airbnb' split by month:
+
+```{r}
+airbnb |>
+  mutate(month=as.numeric(format(Host.Since, format='%m'))) |>
+  group_by(month) |>
+  summarise(median_price=median(Price, na.rm=T)) -> month_data
+```
+
+Data frame 'airbnb' split by year:
+
+```{r}
+airbnb |>
+  mutate(year=as.numeric(format(Host.Since, format='%Y'))) |>
+  group_by(year) |>
+  summarise(median_price=median(Price, na.rm=T)) -> year_data
+```
+
+```{r}
+g1 <- ggplot(month_data, aes(x=month, y=median_price))+
+  geom_line(color='blue')+geom_point(color='red')+
+  scale_x_continuous(breaks=seq(0, 12, by=1))
+  
+g2 <- ggplot(year_data, aes(x=year, y=median_price))+
+  geom_line(color='blue')+geom_point(color='red')+
+  scale_x_continuous(breaks=seq(2008, 2018))
+
+gridExtra::grid.arrange(g1, g2, nrow=2)
+```
+
+In the graphs above, we see that airbnb prices in Madrid go down during the summer but stay high especially from October to February. Additionally, we note that the median price dropped from 2011 to 2017, likely as a result of the economic downturn.
+
+
+
+### 3. Is there a significant difference in price by 'property type' or 'room type'?
+
+```{r}
+airbnb |>
+  filter(Property.Type == c("Apartment", "Bed & Breakfast", "Chalet", "Condominium", "Dorm", "Guesthouse", "House", "Loft", "Other", "Serviced apartment")) |>
+  ggplot(aes(x = Property.Type, y = Price)) +
+  geom_boxplot(aes(fill=Property.Type)) + 
+  xlab("Property Type") +
+  scale_y_continuous(breaks = seq(0, 500, by=50)) + theme_bw() +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1), legend.position="none")
+```
+
+Most of the airbnbs listed in Madrid are apartments, condominiums, houses, serviced apartments and other. The apartment is priced higher than the rest of the properties.
+
+```{r}
+airbnb |>
+  ggplot(aes(x = Room.Type, y = Price)) +
+  geom_boxplot(aes(fill=Room.Type)) + 
+  xlab("Room Type") +
+  scale_y_continuous(breaks = seq(0, 800, by=50)) + theme_bw() +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1), legend.position="none")
+```
+
+Most airbnb listings in Madrid offer an entire home/apt rentals and have higher prices than other room types.
+
+
+
+## Linear Regression Model
+
+## Madrid_airbnb_noreview dataframe
+
+Select the columns to use in your model:
+```{r}
+# remove not needed columns
+df_airbnb <- subset(airbnb_original, select = -c(ID, Descrip_processed, Host.ID, Host.Since, Neighbourhood, Neighbourhood.Group, Zipcode, City, Latitude, Longitude, Property.Type, First.Review, Last.Review))
+```
+
+Run correlations:
+```{r}
+cor(df_airbnb)
+```
+
+Compare graphically:
+```{r}
+#pairs(df_airbnb) # Error in plot: figure margins too large
+```
+
+```{r}
+library(GGally)
+ggpairs(df_airbnb[, c("Room.Type", "Accommodates", "Bathrooms", "Bedrooms", "Beds", "Cleaning.Fee", "Guests.Included", "Price")],
+        lower = list(continuous = wrap("points", alpha = 0.3, size = 0.3, color = 'blue'))
+)
+```
+
+
+
+
+## Create Machine Learning Model
+
+### 1. Split the data between train and test
+
+```{r}
+set.seed(123)
+idx <- sample(1:nrow(df_airbnb), nrow(df_airbnb)*0.7)
+airbnb.train <- df_airbnb[idx,]
+airbnb.test <- df_airbnb[-idx,]
+```
+
+### 2. Calculate the linear regression model:
+
+1. Consider only the most representative variables of the correlation calculation:
+```{r}
+model1 <- lm(data=airbnb.train, formula = Price ~ +Host.Listings.Count+Room.Type+Accommodates+Bathrooms+Bedrooms+Beds+Security.Deposit+Cleaning.Fee+Guests.Included+Review.Scores.Location+Cancellation.Policy)
+
+summary(model1)
+```
+
+2. Take all:
+```{r}
+model2 <- lm(data=airbnb.train, formula = Price ~ .)
+
+summary(model2)
+```
+
+
+3. Since the model that took all the variables has a higher R-squared and a lower error than the first one, we will continue eliminating variables from the second model considering the t-student value.
+```{r}
+model3 <- lm(data=airbnb.train, formula = Price ~ . -Host.Response.Time-Host.Response.Rate-Beds-Bed.Type-Maximum.Nights-Availability.365-Number.of.Reviews-Review.Scores.Accuracy-Review.Scores.Checkin-Review.Scores.Value-Cancellation.Policy)
+
+summary(model3)
+```
+
+4. Remove less representative features from the model above: - min nights, cleanliness, communication
+```{r}
+model4 <- lm(data=airbnb.train, formula = Price ~ . -Host.Response.Time-Host.Response.Rate-Beds-Bed.Type-Maximum.Nights-Availability.365-Number.of.Reviews-Review.Scores.Accuracy-Review.Scores.Checkin-Review.Scores.Value-Cancellation.Policy-Minimum.Nights-Review.Scores.Cleanliness-Review.Scores.Communication)
+
+summary(model4)
+```
+
+5. Remove less representative features from the model above: - host listings count, extra people, scores rating, scores location, reviews  per month
+```{r}
+model5 <- lm(data=airbnb.train, formula = Price ~ . -Host.Response.Time-Host.Response.Rate-Beds-Bed.Type-Maximum.Nights-Availability.365-Number.of.Reviews-Review.Scores.Accuracy-Review.Scores.Checkin-Review.Scores.Value-Cancellation.Policy-Minimum.Nights-Review.Scores.Cleanliness-Review.Scores.Communication-Host.Listings.Count-Extra.People-Review.Scores.Rating-Review.Scores.Location-Reviews.per.Month)
+
+summary(model5)
+```
+
+6. Remove less representative features from the model above: - Guests.Included
+```{r}
+model6 <- lm(data=airbnb.train, formula = Price ~ . -Host.Response.Time-Host.Response.Rate-Beds-Bed.Type-Maximum.Nights-Availability.365-Number.of.Reviews-Review.Scores.Accuracy-Review.Scores.Checkin-Review.Scores.Value-Cancellation.Policy-Minimum.Nights-Review.Scores.Cleanliness-Review.Scores.Communication-Host.Listings.Count-Extra.People-Review.Scores.Rating-Review.Scores.Location-Reviews.per.Month-Guests.Included)
+
+summary(model6)
+```
+
+
+### 3. Check quality of the model (training and testing data)
+
+```{r}
+airbnb.train$price_est <- predict(model5, airbnb.train)
+caret::postResample(pred = airbnb.train$price_est, obs=airbnb.train$Price)
+```
+
+```{r}
+airbnb.test$price_est <- predict(model5, airbnb.test)
+caret::postResample(pred = airbnb.test$price_est, obs=airbnb.test$Price)
+```
+
+### 4. Check residuals
+
+Checking residuals with training data
+
+```{r}
+ggplot(airbnb.train, aes(x=Price, y=Price-price_est)) +
+  geom_point(color='blue', alpha=0.2) + 
+  geom_hline(yintercept = 0, color='red') + 
+  ggtitle("Residuals in trainig data")
+```
+
+```{r}
+ggplot(airbnb.train, aes(x=Price-price_est)) +
+  geom_histogram(color='red', fill='blue')
+```
+
+Checking residuals with testing data (this is the important part)
+
+```{r}
+ggplot(airbnb.test, aes(x=Price, y=Price-price_est)) +
+  geom_point(color='blue', alpha=0.2) + 
+  geom_hline(yintercept = 0, color='red') + 
+  ggtitle("Residuals in testing data")
+```
+
+```{r}
+ggplot(airbnb.test, aes(x=Price-price_est)) +
+  geom_histogram(color='red', fill='blue')
+```
+
+
+
+
+
+### Madrid_airbnb_imputed_reviews_others
+
+```{r}
+# remove not needed columns
+df_airbnb2 <- subset(airbnb2_original, select = -c(ID, Descrip_processed, Host.ID, Host.Since, Neighbourhood, Neighbourhood.Group, Zipcode, City, Latitude, Longitude, Property.Type, First.Review, Last.Review))
+```
+
+Run correlations:
+```{r}
+cor(df_airbnb2)
+```
+
+Compare graphically:
+```{r}
+library(GGally)
+ggpairs(df_airbnb2[, c("Room.Type", "Accommodates", "Bathrooms", "Bedrooms", "Beds", "Cleaning.Fee", "Guests.Included", "Price")],
+        lower = list(continuous = wrap("points", alpha = 0.3, size = 0.3, color = 'blue'))
+)
+```
+
+
+## Create Machine Learning Models
+
+
+### 1. Split the data between train and test
+
+```{r}
+set.seed(123)
+idx2 <- sample(1:nrow(df_airbnb2), nrow(df_airbnb2)*0.7)
+airbnb2.train <- df_airbnb2[idx2,]
+airbnb2.test <- df_airbnb2[-idx2,]
+```
+
+### 2. Calculate the linear regression model:
+
+1. Consider only the most representative variables of the correlation calculation:
+```{r}
+model7 <- lm(data=airbnb2.train, formula = Price ~ +Host.Listings.Count+Room.Type+Accommodates+Bathrooms+Bedrooms+Beds+Security.Deposit+Cleaning.Fee+Guests.Included+Review.Scores.Location+Cancellation.Policy)
+
+summary(model7)
+```
+
+2. Take all:
+```{r}
+model8 <- lm(data=airbnb2.train, formula = Price ~ .)
+
+summary(model8)
+```
+
+
+3. Since the model that took all the variables has a higher R-squared and a lower error than the first one, we will continue eliminating variables from the second model considering the t-student value.
+```{r}
+model9 <- lm(data=airbnb2.train, formula = Price ~ . -Host.Response.Time-Host.Response.Rate-Host.Listings.Count -Beds-Bed.Type-Extra.People-Minimum.Nights-Maximum.Nights-Availability.365-Number.of.Reviews-Review.Scores.Accuracy-Review.Scores.Cleanliness-Review.Scores.Checkin-Review.Scores.Communication-Review.Scores.Value-Cancellation.Policy)
+
+summary(model9)
+```
+
+4. Remove less representative features from the model above: - Guests.Included, Review.Scores.Rating 
+```{r}
+model10 <- lm(data=airbnb2.train, formula = Price ~ . -Host.Response.Time-Host.Response.Rate-Host.Listings.Count -Beds-Bed.Type-Extra.People-Minimum.Nights-Maximum.Nights-Availability.365-Number.of.Reviews-Review.Scores.Accuracy-Review.Scores.Cleanliness-Review.Scores.Checkin-Review.Scores.Communication-Review.Scores.Value-Cancellation.Policy-Guests.Included-Review.Scores.Rating )
+
+summary(model10)
+```
+
+5. Remove less representative features from the model above: - Reviews.per.Month
+```{r}
+model11 <- lm(data=airbnb2.train, formula = Price ~ . -Host.Response.Time-Host.Response.Rate-Beds-Bed.Type-Maximum.Nights-Availability.365-Number.of.Reviews-Review.Scores.Accuracy-Review.Scores.Checkin-Review.Scores.Value-Cancellation.Policy-Minimum.Nights-Review.Scores.Cleanliness-Review.Scores.Communication-Host.Listings.Count-Extra.People-Review.Scores.Rating-Review.Scores.Location-Reviews.per.Month-Reviews.per.Month)
+
+summary(model11)
+```
+
+6. Remove less representative features from the model above: - Guests.Included
+```{r}
+model12 <- lm(data=airbnb2.train, formula = Price ~ . -Host.Response.Time-Host.Response.Rate-Beds-Bed.Type-Maximum.Nights-Availability.365-Number.of.Reviews-Review.Scores.Accuracy-Review.Scores.Checkin-Review.Scores.Value-Cancellation.Policy-Minimum.Nights-Review.Scores.Cleanliness-Review.Scores.Communication-Host.Listings.Count-Extra.People-Review.Scores.Rating-Review.Scores.Location-Reviews.per.Month-Guests.Included-Guests.Included)
+
+summary(model12)
+```
+
+
+### 3. Check quality of the model (training and testing data)
+
+```{r}
+airbnb2.train$price_est2 <- predict(model11, airbnb2.train)
+caret::postResample(pred = airbnb2.train$price_est2, obs=airbnb2.train$Price)
+```
+
+```{r}
+airbnb2.test$price_est2 <- predict(model11, airbnb2.test)
+caret::postResample(pred = airbnb2.test$price_est2, obs=airbnb2.test$Price)
+```
+
+### 4. Check residuals
+
+Checking residuals with training data
+
+```{r}
+ggplot(airbnb2.train, aes(x=Price, y=Price-price_est2)) +
+  geom_point(color='blue', alpha=0.2) + 
+  geom_hline(yintercept = 0, color='red') + 
+  ggtitle("Residuals in trainig data")
+```
+
+```{r}
+ggplot(airbnb2.train, aes(x=Price-price_est2)) +
+  geom_histogram(color='red', fill='blue')
+```
+
+Checking residuals with testing data (this is the important part)
+
+```{r}
+ggplot(airbnb2.test, aes(x=Price, y=Price-price_est2)) +
+  geom_point(color='blue', alpha=0.2) + 
+  geom_hline(yintercept = 0, color='red') + 
+  ggtitle("Residuals in testing data")
+```
+
+```{r}
+ggplot(airbnb2.test, aes(x=Price-price_est2)) +
+  geom_histogram(color='red', fill='blue')
+```
+
+
+
+
+
+
+
+
+
+
